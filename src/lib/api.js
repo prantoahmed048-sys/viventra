@@ -140,6 +140,31 @@ export async function insertOrder(order) {
     status: order.status || "pending",
     advance_paid: !!order.advancePaid,
   };
+
+  // Primary path: create the order through our own server (/api/create-order),
+  // which works reliably everywhere — including Facebook/Instagram's in-app
+  // browser, which can break a direct anon-key request straight to Supabase.
+  try {
+    const res = await fetch("/api/create-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+    });
+    if (res.status === 501) {
+      // Not configured yet (missing SUPABASE_SERVICE_ROLE_KEY) — fall back below.
+    } else if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new Error(json.error || "Could not place order — please try again");
+    } else {
+      const json = await res.json();
+      return json.order;
+    }
+  } catch (err) {
+    if (!(err instanceof TypeError)) throw err; // a real server error — surface it
+    // otherwise: the fetch itself failed (offline/network) — fall back below
+  }
+
+  // Fallback: server route unavailable — insert directly with the anon key.
   const { data, error } = await supabase.from("orders").insert(row).select().single();
   if (error) throw error;
   return data;
