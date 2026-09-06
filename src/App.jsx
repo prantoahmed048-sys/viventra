@@ -1107,7 +1107,7 @@ export default function Viventra() {
                 <div className="admin-card">
                   <div className="admin-card-title">All Orders ({orders.length})</div>
                   <table className="admin-table">
-                    <thead><tr><th>Date</th><th>Customer</th><th>Items</th><th>Payment</th><th>Total</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Customer</th><th>Address</th><th>Items</th><th>Payment</th><th>Total</th><th>Status</th></tr></thead>
                     <tbody>
                       {orders.map(o=>{
                         const statusMeta = {
@@ -1127,6 +1127,14 @@ export default function Viventra() {
                             <td>
                               <div className="tbl-name">{o.customer_name}</div>
                               <div style={{fontSize:11,color:"var(--muted)"}}>{o.phone}</div>
+                            </td>
+                            <td style={{fontSize:12,color:"var(--brown-light)",maxWidth:220}}>
+                              <div>{o.address}</div>
+                              {o.zone_id && (
+                                <div style={{fontSize:11,color:"var(--muted)"}}>
+                                  Zone: {zones.find(z=>z.id===o.zone_id)?.name || o.zone_id}
+                                </div>
+                              )}
                             </td>
                             <td style={{fontSize:12,color:"var(--brown-light)"}}>
                               {(o.items||[]).map(it=>`${it.name} ×${it.qty}`).join(", ")}
