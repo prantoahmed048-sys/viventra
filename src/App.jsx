@@ -469,7 +469,7 @@ export default function Viventra() {
   const [loginForm, setLoginForm]   = useState({ u:"", p:"" });
   const [loginErr, setLoginErr]     = useState("");
   const [editId, setEditId]         = useState(null);
-  const [newProd, setNewProd]       = useState({ name:"", category:"", price:"", emoji:"🛍️", image:null, desc:"", features:"", discount:"0", discountType:"percent" });
+  const [newProd, setNewProd]       = useState({ name:"", category:"", price:"", emoji:"🛍️", image:null, images:[], desc:"", features:"", discount:"0", discountType:"percent" });
   const [zones, setZones]           = useState([]);
   const [zoneForm, setZoneForm]     = useState({ name:"", charge:"", isLocal:false });
   const [conditionalCod, setConditionalCod] = useState(false);
@@ -480,6 +480,8 @@ export default function Viventra() {
   const [cardForm, setCardForm]     = useState({ number:"", expiry:"", cvv:"", name:"" });
   const [pendingOrderId, setPendingOrderId] = useState(null);
   const fileRef                     = useRef(null);
+  const galleryFileRef              = useRef(null);
+  const [galleryIndex, setGalleryIndex] = useState(0);
   const [loadingData, setLoadingData] = useState(true);
   const [loadError, setLoadError]     = useState("");
 
@@ -655,6 +657,19 @@ export default function Viventra() {
     reader.readAsDataURL(file);
   };
 
+  const handleGalleryUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    files.forEach(file => {
+      if(!file.type.startsWith("image/")){ toast2("⚠️ Please select image files"); return; }
+      if(file.size > 5 * 1024 * 1024){ toast2("⚠️ Each image must be under 5MB"); return; }
+      const reader = new FileReader();
+      reader.onload = ev => setNewProd(f=>({...f, images:[...(f.images||[]), ev.target.result]}));
+      reader.readAsDataURL(file);
+    });
+  };
+  const removeGalleryImage = (i) => setNewProd(f=>({...f, images:(f.images||[]).filter((_,idx)=>idx!==i)}));
+
   const handleAdminLogin = async () => {
     try {
       await api.signIn(loginForm.u.trim(), loginForm.p);
@@ -717,7 +732,7 @@ export default function Viventra() {
         setProducts(prev=>[...prev, inserted]);
         toast2("✓ Product added");
       }
-      setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,desc:"",features:"",discount:"0",discountType:"percent"});
+      setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent"});
       setAdminTab("products");
     } catch (err) {
       toast2("⚠️ " + (err.message || "Could not save product"));
@@ -726,7 +741,7 @@ export default function Viventra() {
 
   const startEdit = (p) => {
     setEditId(p.id);
-    setNewProd({name:p.name,category:p.category,price:String(p.price),emoji:p.emoji,image:p.image||null,desc:p.desc,features:(p.features||[]).join("\n"),discount:String(p.discount||0),discountType:p.discountType||"percent"});
+    setNewProd({name:p.name,category:p.category,price:String(p.price),emoji:p.emoji,image:p.image||null,images:p.images||[],desc:p.desc,features:(p.features||[]).join("\n"),discount:String(p.discount||0),discountType:p.discountType||"percent"});
     setAdminTab("add");
   };
 
@@ -1179,7 +1194,7 @@ export default function Viventra() {
                 <div className="admin-card">
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
                     <div className="admin-card-title" style={{margin:0}}>All Products ({products.length})</div>
-                    <button className="save-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,desc:"",features:"",discount:"0",discountType:"percent"});setAdminTab("add");}}>+ Add New</button>
+                    <button className="save-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent"});setAdminTab("add");}}>+ Add New</button>
                   </div>
                   <table className="admin-table">
                     <thead><tr><th>Photo</th><th>Name</th><th>Category</th><th>Price</th><th>Discount</th><th>Status</th><th>Actions</th></tr></thead>
@@ -1306,6 +1321,25 @@ export default function Viventra() {
                       </div>
                     </div>
 
+                    {/* ── ADDITIONAL PHOTOS (GALLERY) ── */}
+                    <div className="form-group full">
+                      <label className="form-label">Additional Photos (optional)</label>
+                      <input ref={galleryFileRef} type="file" accept="image/*" multiple style={{display:"none"}}
+                        onChange={handleGalleryUpload}/>
+                      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:8}}>
+                        {(newProd.images||[]).map((src,i)=>(
+                          <div key={i} style={{position:"relative",width:72,height:72,borderRadius:8,overflow:"hidden",border:"1px solid var(--border)"}}>
+                            <img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                            <button type="button" onClick={()=>removeGalleryImage(i)}
+                              style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.6)",color:"#fff",border:"none",borderRadius:"50%",width:20,height:20,fontSize:11,cursor:"pointer",lineHeight:"20px",padding:0}}>✕</button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={()=>galleryFileRef.current?.click()}
+                          style={{width:72,height:72,borderRadius:8,border:"1px dashed var(--border)",background:"none",cursor:"pointer",fontSize:22,color:"var(--muted)"}}>+</button>
+                      </div>
+                      <div className="img-upload-hint">Shown as a photo gallery on the product page, alongside the main photo above. JPG · PNG · WEBP — Max 5MB each</div>
+                    </div>
+
                     <div className="form-group">
                       <label className="form-label">Product Name *</label>
                       <input className="form-input" placeholder="e.g. Minimalist Oak Shelf"
@@ -1378,7 +1412,7 @@ export default function Viventra() {
                     </div>
                     <div className="full" style={{display:"flex",gap:12}}>
                       <button className="save-btn" onClick={saveProduct}>{editId?"Update Product":"Add Product"}</button>
-                      {editId&&<button className="action-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,desc:"",features:"",discount:"0",discountType:"percent"});}}>Cancel</button>}
+                      {editId&&<button className="action-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent"});}}>Cancel</button>}
                     </div>
                   </div>
                 </div>
@@ -1915,7 +1949,7 @@ export default function Viventra() {
                     const list = featured.length > 0 ? featured : products.filter(p=>p.visible).slice(0,4);
                     return list.map((p,i)=>(
                       <ProductCard key={p.id} product={p} index={i}
-                        onView={()=>{setSelProd(p);setQty(1);nav("product");}}
+                        onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);nav("product");}}
                         onAdd={()=>addToCart(p)}
                         getFinalPrice={getFinalPrice} hasDiscount={hasDiscount} getSavings={getSavings}/>
                     ));
@@ -1944,7 +1978,7 @@ export default function Viventra() {
               <div className="products-grid">
                 {products.filter(p=>p.visible&&(activeCat==="all"||p.category===activeCat)).map((p,i)=>(
                   <ProductCard key={p.id} product={p} index={i}
-                    onView={()=>{setSelProd(p);setQty(1);nav("product");}}
+                    onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);nav("product");}}
                     onAdd={()=>addToCart(p)}
                     getFinalPrice={getFinalPrice} hasDiscount={hasDiscount} getSavings={getSavings}/>
                 ))}
@@ -1960,18 +1994,36 @@ export default function Viventra() {
               </div>
               <div className="product-detail">
                 <div>
-                  <div className="detail-img-container">
-                    {selProd.image
-                      ?<img src={selProd.image} alt={selProd.name} className="detail-img-photo"/>
-                      :<div className="detail-img-emoji">{selProd.emoji}</div>
-                    }
-                    <div className="zoom-preview">
-                      {selProd.image
-                        ?<img src={selProd.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                        :<span style={{fontSize:56}}>{selProd.emoji}</span>
-                      }
-                    </div>
-                  </div>
+                  {(() => {
+                    const gallery = [selProd.image, ...(selProd.images||[])].filter(Boolean);
+                    const activeSrc = gallery[galleryIndex] || gallery[0];
+                    return (
+                      <>
+                        <div className="detail-img-container">
+                          {activeSrc
+                            ?<img src={activeSrc} alt={selProd.name} className="detail-img-photo"/>
+                            :<div className="detail-img-emoji">{selProd.emoji}</div>
+                          }
+                          <div className="zoom-preview">
+                            {activeSrc
+                              ?<img src={activeSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              :<span style={{fontSize:56}}>{selProd.emoji}</span>
+                            }
+                          </div>
+                        </div>
+                        {gallery.length>1 && (
+                          <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+                            {gallery.map((src,i)=>(
+                              <button key={i} onClick={()=>setGalleryIndex(i)}
+                                style={{width:56,height:56,padding:0,border:i===galleryIndex?"2px solid var(--terra)":"2px solid transparent",borderRadius:8,overflow:"hidden",cursor:"pointer",background:"none"}}>
+                                <img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div>
                   <div className="detail-eyebrow">{selProd.category.replace("-"," ")}</div>
