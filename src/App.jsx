@@ -129,6 +129,14 @@ const CSS = `
   .detail-img-photo { width:100%; height:100%; object-fit:cover; }
   .zoom-preview { position:absolute; right:-240px; top:0; width:220px; height:220px; border-radius:var(--radius); box-shadow:var(--shadow-lg); overflow:hidden; background:var(--linen); border:1px solid var(--linen2); display:none; align-items:center; justify-content:center; font-size:48px; z-index:10; }
   .detail-img-container:hover .zoom-preview { display:flex; }
+  .zoom-hint { position:absolute; right:12px; bottom:12px; background:rgba(0,0,0,0.55); color:white; font-size:11px; padding:5px 10px; border-radius:20px; pointer-events:none; letter-spacing:0.3px; }
+  .lightbox-overlay { position:fixed; inset:0; background:rgba(20,15,10,0.92); z-index:1000; display:flex; align-items:center; justify-content:center; padding:40px; cursor:zoom-out; }
+  .lightbox-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; cursor:default; }
+  .lightbox-close { position:absolute; top:20px; right:24px; background:rgba(255,255,255,0.12); color:white; border:none; width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .lightbox-nav { position:absolute; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.12); color:white; border:none; width:48px; height:48px; border-radius:50%; font-size:26px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .lightbox-prev { left:20px; }
+  .lightbox-next { right:20px; }
+  @media (max-width:640px) { .lightbox-overlay { padding:16px; } .lightbox-nav { width:40px; height:40px; font-size:20px; } }
   .detail-eyebrow { font-size:11px; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:12px; }
   .detail-title { font-family:'Cormorant Garamond',serif; font-size:40px; font-weight:400; color:var(--brown); margin-bottom:16px; line-height:1.2; }
   .detail-price { font-size:28px; font-weight:600; color:var(--terra); margin-bottom:24px; }
@@ -473,7 +481,7 @@ export default function Viventra() {
   const [loginForm, setLoginForm]   = useState({ u:"", p:"" });
   const [loginErr, setLoginErr]     = useState("");
   const [editId, setEditId]         = useState(null);
-  const [newProd, setNewProd]       = useState({ name:"", category:"", price:"", emoji:"🛍️", image:null, images:[], desc:"", features:"", discount:"0", discountType:"percent", stock:"" });
+  const [newProd, setNewProd]       = useState({ name:"", category:"", price:"", emoji:"🛍️", image:null, images:[], desc:"", features:"", discount:"0", discountType:"percent", stock:"", freeDelivery:false });
   const [zones, setZones]           = useState([]);
   const [zoneForm, setZoneForm]     = useState({ name:"", charge:"", isLocal:false });
   const [conditionalCod, setConditionalCod] = useState(false);
@@ -486,6 +494,7 @@ export default function Viventra() {
   const fileRef                     = useRef(null);
   const galleryFileRef              = useRef(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [loadError, setLoadError]     = useState("");
 
@@ -623,6 +632,21 @@ export default function Viventra() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminAuth]);
 
+  // ─── Manual refresh for the admin Orders tab (checks for new orders) ────────
+  const [refreshingOrders, setRefreshingOrders] = useState(false);
+  const refreshOrders = async () => {
+    setRefreshingOrders(true);
+    try {
+      const rows = await api.fetchOrders();
+      setOrders(rows);
+      toast2("✓ Orders refreshed");
+    } catch (err) {
+      toast2("⚠️ " + (err.message || "Could not refresh orders"));
+    } finally {
+      setRefreshingOrders(false);
+    }
+  };
+
   const copyBkash = () => {
     navigator.clipboard.writeText(bkashNumber).then(()=>{
       setCopied(true); setTimeout(()=>setCopied(false), 2000);
@@ -652,14 +676,23 @@ export default function Viventra() {
   const cartCount = cart.reduce((s,i)=>s+i.qty,0);
   const enabledPayments = payments.filter(p=>p.enabled);
   const selectedZone    = zones.find(z=>z.id===checkout.zoneId) || null;
-  const deliveryCharge  = selectedZone ? selectedZone.charge : 0;
+  // If any item in the cart is marked "Free Delivery" by the admin, the whole
+  // order's delivery charge is waived — simplest rule for a single flat
+  // per-order delivery fee (rather than trying to split it item by item).
+  const cartHasFreeDelivery = cart.some(i=>i.freeDelivery);
+  const deliveryCharge  = cartHasFreeDelivery ? 0 : (selectedZone ? selectedZone.charge : 0);
   const orderTotal      = cartTotal + deliveryCharge;
   // Conditional COD: when ON, customers ordering COD to non-local zones
   // must pay the delivery charge in advance via bKash. Product cost stays COD.
+  // Doesn't apply when delivery is already free — there's nothing to advance.
   const requiresConditionalCod = conditionalCod
     && checkout.payment === "cod"
     && selectedZone
-    && selectedZone.isLocal === false;
+    && selectedZone.isLocal === false
+    && !cartHasFreeDelivery;
+  // The "Partial — Delivery Only" bKash mode only makes sense when there's an
+  // actual delivery charge to pay in advance.
+  const bkashPartialActive = checkout.bkashMode === "partial" && !cartHasFreeDelivery;
 
   // Shrinks a photo before it's stored, so product photos don't bloat the
   // catalogue that every visitor has to download on page load — the main
@@ -772,7 +805,7 @@ export default function Viventra() {
         setProducts(prev=>[...prev, inserted]);
         toast2("✓ Product added");
       }
-      setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:""});
+      setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:"",freeDelivery:false});
       setAdminTab("products");
     } catch (err) {
       toast2("⚠️ " + (err.message || "Could not save product"));
@@ -781,7 +814,7 @@ export default function Viventra() {
 
   const startEdit = (p) => {
     setEditId(p.id);
-    setNewProd({name:p.name,category:p.category,price:String(p.price),emoji:p.emoji,image:p.image||null,images:p.images||[],desc:p.desc,features:(p.features||[]).join("\n"),discount:String(p.discount||0),discountType:p.discountType||"percent",stock:(p.stock===null||p.stock===undefined)?"":String(p.stock)});
+    setNewProd({name:p.name,category:p.category,price:String(p.price),emoji:p.emoji,image:p.image||null,images:p.images||[],desc:p.desc,features:(p.features||[]).join("\n"),discount:String(p.discount||0),discountType:p.discountType||"percent",stock:(p.stock===null||p.stock===undefined)?"":String(p.stock),freeDelivery:!!p.freeDelivery});
     setAdminTab("add");
   };
 
@@ -1162,16 +1195,21 @@ export default function Viventra() {
                 <div className="admin-card">
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginBottom:16}}>
                     <div className="admin-card-title" style={{margin:0}}>All Orders ({orders.length})</div>
-                    <select className="form-select" style={{padding:"8px 12px",fontSize:13,maxWidth:220}}
-                      value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)}>
-                      <option value="all">Filter: All statuses</option>
-                      <option value="pending">Pending</option>
-                      <option value="pending_verification">Awaiting Verification</option>
-                      <option value="verified">Verified</option>
-                      <option value="shipped">Shipped</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
+                    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                      <select className="form-select" style={{padding:"8px 12px",fontSize:13,maxWidth:220}}
+                        value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)}>
+                        <option value="all">Filter: All statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="pending_verification">Awaiting Verification</option>
+                        <option value="verified">Verified</option>
+                        <option value="shipped">Shipped</option>
+                        <option value="delivered">Delivered</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                      <button className="action-btn" onClick={refreshOrders} disabled={refreshingOrders} style={refreshingOrders?{opacity:0.6,cursor:"not-allowed"}:undefined}>
+                        {refreshingOrders?"⏳ Refreshing…":"🔄 Refresh"}
+                      </button>
+                    </div>
                   </div>
                   <table className="admin-table">
                     <thead><tr>
@@ -1265,10 +1303,10 @@ export default function Viventra() {
                 <div className="admin-card">
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
                     <div className="admin-card-title" style={{margin:0}}>All Products ({products.length})</div>
-                    <button className="save-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:""});setAdminTab("add");}}>+ Add New</button>
+                    <button className="save-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:"",freeDelivery:false});setAdminTab("add");}}>+ Add New</button>
                   </div>
                   <table className="admin-table">
-                    <thead><tr><th>Photo</th><th>Name</th><th>Category</th><th>Price</th><th>Discount</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Photo</th><th>Name</th><th>Category</th><th>Price</th><th>Discount</th><th>Stock</th><th>Delivery</th><th>Status</th><th>Actions</th></tr></thead>
                     <tbody>
                       {products.map(p=>(
                         <tr key={p.id}>
@@ -1290,6 +1328,11 @@ export default function Viventra() {
                               : Number(p.stock)<=0
                                 ? <span style={{fontSize:12,color:"#E8384F",fontWeight:600}}>Out of stock</span>
                                 : <span style={{fontSize:13,color:Number(p.stock)<=5?"#C77A2E":"var(--brown-light)",fontWeight:Number(p.stock)<=5?600:400}}>{p.stock}</span>}
+                          </td>
+                          <td>
+                            {p.freeDelivery
+                              ? <span className="tbl-badge active">🚚 Free</span>
+                              : <span style={{fontSize:12,color:"var(--muted)"}}>—</span>}
                           </td>
                           <td><span className={`tbl-badge ${p.visible?"active":"inactive"}`}>{p.visible?"Active":"Hidden"}</span></td>
                           <td>
@@ -1444,6 +1487,14 @@ export default function Viventra() {
                       <input className="form-input" type="number" min="0" placeholder="e.g. 25 — blank = don't track"
                         value={newProd.stock} onChange={e=>setNewProd(f=>({...f,stock:e.target.value}))}/>
                     </div>
+                    <div className="form-group">
+                      <label className="form-label">Delivery</label>
+                      <label style={{display:"flex",alignItems:"center",gap:8,marginTop:6,cursor:"pointer",fontSize:13,color:"var(--brown-light)"}}>
+                        <input type="checkbox" checked={!!newProd.freeDelivery}
+                          onChange={e=>setNewProd(f=>({...f,freeDelivery:e.target.checked}))} style={{cursor:"pointer"}}/>
+                        🚚 Offer <strong style={{color:"var(--sage-dark)"}}>Free Delivery</strong> on this product
+                      </label>
+                    </div>
                     <div className="form-group full">
                       <label className="form-label">Description *</label>
                       <textarea className="form-input form-textarea" placeholder="Describe the product..."
@@ -1495,7 +1546,7 @@ export default function Viventra() {
                     </div>
                     <div className="full" style={{display:"flex",gap:12}}>
                       <button className="save-btn" onClick={saveProduct}>{editId?"Update Product":"Add Product"}</button>
-                      {editId&&<button className="action-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:""});}}>Cancel</button>}
+                      {editId&&<button className="action-btn" onClick={()=>{setEditId(null);setNewProd({name:"",category:categories[0]?.id||"",price:"",emoji:"🛍️",image:null,images:[],desc:"",features:"",discount:"0",discountType:"percent",stock:"",freeDelivery:false});}}>Cancel</button>}
                     </div>
                   </div>
                 </div>
@@ -2032,7 +2083,7 @@ export default function Viventra() {
                     const list = featured.length > 0 ? featured : products.filter(p=>p.visible).slice(0,4);
                     return list.map((p,i)=>(
                       <ProductCard key={p.id} product={p} index={i}
-                        onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);nav("product");}}
+                        onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);setLightboxOpen(false);nav("product");}}
                         onAdd={()=>addToCart(p)}
                         getFinalPrice={getFinalPrice} hasDiscount={hasDiscount} getSavings={getSavings}/>
                     ));
@@ -2061,7 +2112,7 @@ export default function Viventra() {
               <div className="products-grid">
                 {products.filter(p=>p.visible&&(activeCat==="all"||p.category===activeCat)).map((p,i)=>(
                   <ProductCard key={p.id} product={p} index={i}
-                    onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);nav("product");}}
+                    onView={()=>{setSelProd(p);setQty(1);setGalleryIndex(0);setLightboxOpen(false);nav("product");}}
                     onAdd={()=>addToCart(p)}
                     getFinalPrice={getFinalPrice} hasDiscount={hasDiscount} getSavings={getSavings}/>
                 ))}
@@ -2082,11 +2133,12 @@ export default function Viventra() {
                     const activeSrc = gallery[galleryIndex] || gallery[0];
                     return (
                       <>
-                        <div className="detail-img-container">
+                        <div className="detail-img-container" style={activeSrc?{cursor:"zoom-in"}:undefined} onClick={()=>activeSrc&&setLightboxOpen(true)}>
                           {activeSrc
                             ?<img src={activeSrc} alt={selProd.name} className="detail-img-photo"/>
                             :<div className="detail-img-emoji">{selProd.emoji}</div>
                           }
+                          {activeSrc && <div className="zoom-hint">🔍 Tap to zoom</div>}
                           <div className="zoom-preview">
                             {activeSrc
                               ?<img src={activeSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
@@ -2102,6 +2154,18 @@ export default function Viventra() {
                                 <img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                               </button>
                             ))}
+                          </div>
+                        )}
+                        {lightboxOpen && activeSrc && (
+                          <div className="lightbox-overlay" onClick={()=>setLightboxOpen(false)}>
+                            <button className="lightbox-close" onClick={(e)=>{e.stopPropagation();setLightboxOpen(false);}}>✕</button>
+                            {gallery.length>1 && (
+                              <button className="lightbox-nav lightbox-prev" onClick={(e)=>{e.stopPropagation();setGalleryIndex(i=>(i-1+gallery.length)%gallery.length);}}>‹</button>
+                            )}
+                            <img src={activeSrc} alt={selProd.name} className="lightbox-img" onClick={e=>e.stopPropagation()}/>
+                            {gallery.length>1 && (
+                              <button className="lightbox-nav lightbox-next" onClick={(e)=>{e.stopPropagation();setGalleryIndex(i=>(i+1)%gallery.length);}}>›</button>
+                            )}
                           </div>
                         )}
                       </>
@@ -2123,6 +2187,11 @@ export default function Viventra() {
                       <div className="detail-savings-tag">
                         🏷️ You save ৳{getSavings(selProd).toLocaleString()}
                         {selProd.discountType==="percent"?` (${selProd.discount}% off)`:` (৳${selProd.discount} off)`}
+                      </div>
+                    )}
+                    {selProd.freeDelivery&&(
+                      <div style={{marginTop:8,fontSize:13,fontWeight:600,color:"var(--sage-dark)",display:"flex",alignItems:"center",gap:6}}>
+                        🚚 Free Delivery on this item
                       </div>
                     )}
                   </div>
@@ -2258,7 +2327,9 @@ export default function Viventra() {
                       {selectedZone&&(
                         <div className="zone-charge-badge">
                           <span>Delivery charge for <strong>{selectedZone.name}</strong>:</span>
-                          <span className="zone-charge-pill">৳{selectedZone.charge}</span>
+                          {cartHasFreeDelivery
+                            ? <span className="zone-charge-pill" style={{background:"rgba(122,158,126,0.15)",color:"var(--sage-dark)"}}>🚚 FREE</span>
+                            : <span className="zone-charge-pill">৳{selectedZone.charge}</span>}
                         </div>
                       )}
                       {zones.length===0&&(
@@ -2289,20 +2360,22 @@ export default function Viventra() {
 
                           {/* Mode toggle */}
                           <div className="bkash-mode-tabs">
-                            <button className={`bkash-mode-tab ${checkout.bkashMode==="full"?"active":""}`}
+                            <button className={`bkash-mode-tab ${!bkashPartialActive?"active":""}`}
                               onClick={()=>setCheckout(f=>({...f,bkashMode:"full",txnCode:""}))}>
                               💳 Full Payment<br/>
                               <span style={{fontSize:10,opacity:0.85}}>Pay entire order via bKash</span>
                             </button>
-                            <button className={`bkash-mode-tab ${checkout.bkashMode==="partial"?"active":""}`}
-                              onClick={()=>setCheckout(f=>({...f,bkashMode:"partial",txnCode:""}))}>
-                              🚚 Partial — Delivery Only<br/>
-                              <span style={{fontSize:10,opacity:0.85}}>Pay delivery now, rest on arrival</span>
-                            </button>
+                            {!cartHasFreeDelivery&&(
+                              <button className={`bkash-mode-tab ${bkashPartialActive?"active":""}`}
+                                onClick={()=>setCheckout(f=>({...f,bkashMode:"partial",txnCode:""}))}>
+                                🚚 Partial — Delivery Only<br/>
+                                <span style={{fontSize:10,opacity:0.85}}>Pay delivery now, rest on arrival</span>
+                              </button>
+                            )}
                           </div>
 
                           {/* FULL PAYMENT mode */}
-                          {checkout.bkashMode==="full"&&(
+                          {!bkashPartialActive&&(
                             <>
                               <div style={{fontSize:12,color:"var(--brown-light)",marginBottom:12}}>
                                 Send <strong style={{color:"#c0395a"}}>৳{orderTotal.toLocaleString()}</strong> to:
@@ -2330,7 +2403,7 @@ export default function Viventra() {
                           )}
 
                           {/* PARTIAL PAYMENT mode */}
-                          {checkout.bkashMode==="partial"&&(
+                          {bkashPartialActive&&(
                             <>
                               <div className="partial-info-box">
                                 Pay only the <strong>delivery charge</strong> now via bKash.
@@ -2459,7 +2532,7 @@ export default function Viventra() {
                   {enabledPayments.length>0&&checkout.payment!=="gateway"&&(
                     <button className="checkout-btn" onClick={placeOrder}>
                       ✓ Place Order —{" "}
-                      {(checkout.payment==="manual_bkash"&&checkout.bkashMode==="partial")||requiresConditionalCod
+                      {(checkout.payment==="manual_bkash"&&bkashPartialActive)||requiresConditionalCod
                         ? `৳${deliveryCharge.toLocaleString()} bKash + ৳${cartTotal.toLocaleString()} COD`
                         : `৳${orderTotal.toLocaleString()}`}
                     </button>
@@ -2481,12 +2554,12 @@ export default function Viventra() {
                   </div>
                   <div className="summary-row">
                     <span>Delivery {selectedZone?`(${selectedZone.name})`:""}</span>
-                    <span style={{color:selectedZone?"var(--terra)":"var(--muted)"}}>
-                      {selectedZone?`৳${deliveryCharge.toLocaleString()}`:"— select zone"}
+                    <span style={{color:cartHasFreeDelivery?"var(--sage-dark)":selectedZone?"var(--terra)":"var(--muted)",fontWeight:cartHasFreeDelivery?600:400}}>
+                      {cartHasFreeDelivery?"🚚 FREE":selectedZone?`৳${deliveryCharge.toLocaleString()}`:"— select zone"}
                     </span>
                   </div>
                   <div className="summary-row total"><span>Total</span><span>৳{orderTotal.toLocaleString()}</span></div>
-                  {((checkout.payment==="manual_bkash"&&checkout.bkashMode==="partial")||requiresConditionalCod)&&selectedZone&&(
+                  {((checkout.payment==="manual_bkash"&&bkashPartialActive)||requiresConditionalCod)&&selectedZone&&(
                     <>
                       <div style={{height:1,background:"var(--linen2)",margin:"12px 0"}}/>
                       <div style={{fontSize:11,letterSpacing:1,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>
@@ -2516,7 +2589,7 @@ export default function Viventra() {
                 Thank you for shopping with <strong>VIVENTRA</strong>. We'll be in touch shortly with delivery details. Expect something beautiful at your door.
                 {(checkout.payment==="manual_bkash"||requiresConditionalCod)&&checkout.txnCode&&(
                   <><br/><br/>
-                    {(checkout.bkashMode==="partial"||requiresConditionalCod)?(
+                    {(bkashPartialActive||requiresConditionalCod)?(
                       <>
                         <span style={{fontSize:13,color:"var(--muted)"}}>Delivery payment confirmed via bKash:</span><br/>
                         <strong style={{color:requiresConditionalCod?"var(--gold)":"#c0395a",fontSize:16,letterSpacing:2}}>{checkout.txnCode}</strong><br/><br/>
@@ -2583,6 +2656,9 @@ function ProductCard({ product, index, onView, onAdd, getFinalPrice, hasDiscount
         <div className="product-cat">{product.category.replace("-"," ")}</div>
         <div className="product-name">{product.name}</div>
         <div className="product-desc-short">{product.desc.slice(0,80)}…</div>
+        {product.freeDelivery&&!outOfStock&&(
+          <div style={{fontSize:11,fontWeight:600,color:"var(--sage-dark)",marginBottom:4}}>🚚 Free Delivery</div>
+        )}
         <div className="product-footer">
           <div className="price-block">
             {onSale&&<div className="price-original">৳{product.price.toLocaleString()}</div>}
