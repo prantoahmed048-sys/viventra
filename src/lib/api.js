@@ -20,6 +20,7 @@ const productFromRow = (r) => ({
   features: r.features || [],
   visible: r.visible,
   stock: r.stock === null || r.stock === undefined ? null : Number(r.stock), // null = unlimited/not tracked
+  freeDelivery: !!r.free_delivery,
 });
 
 const productToRow = (p) => ({
@@ -38,6 +39,7 @@ const productToRow = (p) => ({
     : String(p.features || "").split("\n").map((s) => s.trim()).filter(Boolean),
   visible: p.visible !== false,
   stock: (p.stock === "" || p.stock === null || p.stock === undefined) ? null : Math.max(0, Math.trunc(Number(p.stock)) || 0),
+  free_delivery: !!p.freeDelivery,
 });
 
 const zoneFromRow = (r) => ({ id: r.id, name: r.name, charge: Number(r.charge), isLocal: r.is_local });
