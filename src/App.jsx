@@ -9,6 +9,12 @@ import * as api from "./lib/api.js";
 const LOGO_BADGE = "/logo.jpg";
 const COVER_PHOTO = "/cover.jpg";
 
+// Google reCAPTCHA (v2 checkbox) site key — shown at checkout to block bot /
+// fake orders. This key is meant to be public (it's embedded in every page
+// that uses reCAPTCHA); the matching secret key lives only on Vercel as the
+// RECAPTCHA_SECRET_KEY environment variable, never in this file.
+const RECAPTCHA_SITE_KEY = "6LfEs7AtAAAAADDCKm-ei4r0uNyUZlkV1Ky-nrTu";
+
 
 // ─── Palette & Fonts ───────────────────────────────────────────────────────────
 const CSS = `
@@ -475,6 +481,42 @@ export default function Viventra() {
   const [bkashSaved, setBkashSaved]   = useState(false);
   const [toast, setToast]           = useState(null);
   const [checkout, setCheckout]     = useState({ name:"", address:"", phone:"", payment:"cod", txnCode:"", zoneId:"", bkashMode:"full" });
+  // ─── reCAPTCHA (v2 checkbox) — shown at checkout to block bot/fake orders ────
+  const [recaptchaToken, setRecaptchaToken] = useState("");
+  const recaptchaBoxRef = useRef(null);
+  const recaptchaWidgetId = useRef(null);
+  const resetRecaptcha = () => {
+    if (window.grecaptcha && recaptchaWidgetId.current !== null) {
+      try { window.grecaptcha.reset(recaptchaWidgetId.current); } catch {}
+    }
+    setRecaptchaToken("");
+  };
+  // Renders (or re-renders) the checkbox fresh every time the checkout page
+  // is opened, since Google's script only supports rendering once per element
+  // and the tokens it gives out expire after a couple of minutes.
+  useEffect(() => {
+    if (page !== "checkout") return;
+    let cancelled = false;
+    recaptchaWidgetId.current = null;
+    setRecaptchaToken("");
+    let tries = 0;
+    const tryRender = () => {
+      if (cancelled || !recaptchaBoxRef.current) return;
+      if (window.grecaptcha && window.grecaptcha.render) {
+        recaptchaBoxRef.current.innerHTML = "";
+        recaptchaWidgetId.current = window.grecaptcha.render(recaptchaBoxRef.current, {
+          sitekey: RECAPTCHA_SITE_KEY,
+          callback: (token) => setRecaptchaToken(token),
+          "expired-callback": () => setRecaptchaToken(""),
+        });
+      } else if (tries < 40) {
+        tries++;
+        setTimeout(tryRender, 250);
+      }
+    };
+    tryRender();
+    return () => { cancelled = true; };
+  }, [page]);
   const [adminAuth, setAdminAuth]   = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminTab, setAdminTab]     = useState("dashboard");
@@ -974,6 +1016,7 @@ export default function Viventra() {
       total: orderTotal,
       status,
       advancePaid,
+      recaptchaToken,
     });
   };
 
@@ -989,6 +1032,7 @@ export default function Viventra() {
       nav("success");
     } catch (err) {
       toast2("⚠️ " + (err.message || "Could not place order — please try again"));
+      resetRecaptcha();
     }
   };
 
@@ -998,9 +1042,16 @@ export default function Viventra() {
   // or running `vite dev` without the /api functions — fall back to the
   // built-in demo card modal so checkout still works end-to-end.
   const startGatewayCheckout = async () => {
+    let order;
     try {
-      const order = await createOrderRow("gateway", "pending");
-      setPendingOrderId(order.id);
+      order = await createOrderRow("gateway", "pending");
+    } catch (err) {
+      toast2("⚠️ " + (err.message || "Could not place order — please try again"));
+      resetRecaptcha();
+      return;
+    }
+    setPendingOrderId(order.id);
+    try {
       const res = await fetch("/api/create-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1027,6 +1078,7 @@ export default function Viventra() {
     if(!checkout.zoneId){ toast2("⚠️ Please select a delivery zone"); return; }
     if(checkout.payment==="manual_bkash"&&!checkout.txnCode.trim()){ toast2("⚠️ Enter your bKash Transaction ID"); return; }
     if(requiresConditionalCod&&!checkout.txnCode.trim()){ toast2("⚠️ Outside Dhaka — please pay delivery charge via bKash and enter the Transaction ID"); return; }
+    if(!recaptchaToken){ toast2("⚠️ Please complete the verification checkbox"); return; }
     if(checkout.payment==="gateway"){ await startGatewayCheckout(); return; }
     await submitOrder(checkout.payment, { advancePaid: requiresConditionalCod });
   };
@@ -2520,6 +2572,7 @@ export default function Viventra() {
                           <button className="pay-now-btn" onClick={async ()=>{
                             if(!checkout.name||!checkout.address||!checkout.phone){ toast2("⚠️ Fill delivery info first"); return; }
                             if(!checkout.zoneId){ toast2("⚠️ Select a delivery zone first"); return; }
+                            if(!recaptchaToken){ toast2("⚠️ Please complete the verification checkbox"); return; }
                             await startGatewayCheckout();
                           }}>
                             🔐 Pay ৳{orderTotal.toLocaleString()} Securely
@@ -2527,6 +2580,12 @@ export default function Viventra() {
                           <div className="secure-note">🔒 256-bit SSL encrypted · Safe & secure checkout</div>
                         </div>
                       )}
+                    </div>
+                  )}
+                  {enabledPayments.length>0&&(
+                    <div className="form-section" style={{marginBottom:20}}>
+                      <div className="form-section-title">Verify You're Human</div>
+                      <div ref={recaptchaBoxRef}></div>
                     </div>
                   )}
                   {enabledPayments.length>0&&checkout.payment!=="gateway"&&(
