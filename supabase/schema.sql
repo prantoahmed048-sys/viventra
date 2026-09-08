@@ -19,15 +19,28 @@ create table if not exists products (
   category       text not null references categories(id) on update cascade on delete restrict,
   price          numeric(12,2) not null default 0,
   emoji          text default '🛍️',
-  image          text,                          -- data: URI or Supabase Storage URL
+  image          text,                          -- data: URI or Supabase Storage URL (cover photo)
+  images         text[] default '{}',           -- extra gallery photos, same format
   badge          text,
   discount       numeric(12,2) not null default 0,
   discount_type  text not null default 'percent' check (discount_type in ('percent','flat')),
   description    text default '',
   features       text[] default '{}',
   visible        boolean not null default true,
+  stock          integer,                       -- null = not tracked (unlimited); a number = tracked
+  free_delivery  boolean not null default false, -- true = waives the delivery charge for orders containing it
   created_at     timestamptz not null default now()
 );
+
+-- Atomically reduces a product's stock when an order is placed (called from
+-- the server, which bypasses RLS). Never goes below 0, and leaves untracked
+-- (null) products alone.
+create or replace function decrement_product_stock(p_id bigint, qty integer)
+returns void
+language sql
+as $$
+  update products set stock = greatest(stock - qty, 0) where id = p_id and stock is not null;
+$$;
 
 -- ─── Delivery zones ──────────────────────────────────────────────────────────
 create table if not exists delivery_zones (
