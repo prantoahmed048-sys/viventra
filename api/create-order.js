@@ -55,6 +55,20 @@ export default async function handler(req, res) {
       .select()
       .single();
     if (error) throw error;
+
+    // Reduce stock for any product that has tracked stock (blank/null stock
+    // means "unlimited" and is left alone). Best-effort: if this fails, the
+    // order itself has already succeeded, so we don't fail the request over
+    // it — just log it.
+    try {
+      for (const item of Array.isArray(row.items) ? row.items : []) {
+        if (item?.id == null || !item?.qty) continue;
+        await admin.rpc("decrement_product_stock", { p_id: item.id, qty: item.qty });
+      }
+    } catch (stockErr) {
+      console.error("Stock decrement failed:", stockErr.message);
+    }
+
     return res.status(200).json({ order: data });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not save order" });
