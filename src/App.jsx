@@ -13,7 +13,7 @@ const COVER_PHOTO = "/cover.jpg";
 // fake orders. This key is meant to be public (it's embedded in every page
 // that uses reCAPTCHA); the matching secret key lives only on Vercel as the
 // RECAPTCHA_SECRET_KEY environment variable, never in this file.
-const RECAPTCHA_SITE_KEY = "6LfEs7AtAAAAADDCKm-ei4r0uNyUZlkV1Ky-nrTu";
+const RECAPTCHA_SITE_KEY = "6LfEs7AtAAAAADDCKm-ei4r0uNyUZIkV1Ky-nrTu";
 
 
 // ─── Palette & Fonts ───────────────────────────────────────────────────────────
