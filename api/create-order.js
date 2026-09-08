@@ -33,6 +33,29 @@ export default async function handler(req, res) {
     }
   }
 
+  // reCAPTCHA verification — blocks bot/fake orders. Only runs once
+  // RECAPTCHA_SECRET_KEY is set on Vercel; until then this is skipped so
+  // checkout doesn't break (same graceful pattern as the service role key).
+  const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
+  if (recaptchaSecret) {
+    if (!row.recaptcha_token) {
+      return res.status(400).json({ error: "Please complete the verification checkbox and try again." });
+    }
+    try {
+      const verifyRes = await fetch("https://www.google.com/recaptcha/api/siteverify", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ secret: recaptchaSecret, response: row.recaptcha_token }),
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyData.success) {
+        return res.status(400).json({ error: "Verification failed — please tick the checkbox again and retry." });
+      }
+    } catch {
+      return res.status(502).json({ error: "Could not verify — please try again." });
+    }
+  }
+
   try {
     const admin = createClient(supabaseUrl, serviceKey);
     const { data, error } = await admin
