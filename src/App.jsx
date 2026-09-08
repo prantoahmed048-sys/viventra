@@ -714,6 +714,18 @@ export default function Viventra() {
   const hasDiscount = (p) => getSavings(p) > 0;
 
   const removeFromCart = (id) => setCart(prev=>prev.filter(i=>i.id!==id));
+  // Changes one cart line's quantity by +1/-1. Dropping to 0 removes the line
+  // entirely (same as tapping ✕), and quantity is capped at the tracked stock
+  // (if any) so a customer can't order more than what's actually available.
+  const changeCartQty = (id, delta) => setCart(prev => prev
+    .map(i => {
+      if (i.id !== id) return i;
+      const tracked = i.stock !== null && i.stock !== undefined;
+      const max = tracked ? Math.max(0, Number(i.stock)) : Infinity;
+      return { ...i, qty: Math.min(max, i.qty + delta) };
+    })
+    .filter(i => i.qty > 0)
+  );
   const cartTotal = cart.reduce((s,i)=>s+getFinalPrice(i)*i.qty,0);
   const cartCount = cart.reduce((s,i)=>s+i.qty,0);
   const enabledPayments = payments.filter(p=>p.enabled);
@@ -828,6 +840,40 @@ export default function Viventra() {
       setPwForm({ current:"", newEmail:"", newPassword:"", confirm:"" });
     } catch (err) {
       toast2("⚠️ " + (err.message || "Could not update credentials"));
+    }
+  };
+
+  // ─── Storewide sale: apply/clear a discount on every product at once ────────
+  const [bulkSale, setBulkSale] = useState({ type:"percent", value:"" });
+  const [bulkSaleBusy, setBulkSaleBusy] = useState(false);
+  const applySaleToAll = async () => {
+    const val = Math.max(0, Number(bulkSale.value) || 0);
+    if (val <= 0) { toast2("⚠️ Enter a discount value first"); return; }
+    if (products.length === 0) { toast2("⚠️ No products yet"); return; }
+    setBulkSaleBusy(true);
+    try {
+      const updated = products.map(p => ({ ...p, discount: val, discountType: bulkSale.type }));
+      await Promise.all(updated.map(p => api.updateProductRow(p.id, p)));
+      setProducts(updated);
+      toast2(`✓ Applied ${bulkSale.type==="percent"?val+"%":"৳"+val} off to all ${updated.length} products`);
+    } catch (err) {
+      toast2("⚠️ " + (err.message || "Could not apply the sale to all products"));
+    } finally {
+      setBulkSaleBusy(false);
+    }
+  };
+  const clearAllDiscounts = async () => {
+    if (products.length === 0) { toast2("⚠️ No products yet"); return; }
+    setBulkSaleBusy(true);
+    try {
+      const updated = products.map(p => ({ ...p, discount: 0 }));
+      await Promise.all(updated.map(p => api.updateProductRow(p.id, p)));
+      setProducts(updated);
+      toast2("✓ Cleared discounts on all products");
+    } catch (err) {
+      toast2("⚠️ " + (err.message || "Could not clear discounts"));
+    } finally {
+      setBulkSaleBusy(false);
     }
   };
 
@@ -1351,6 +1397,34 @@ export default function Viventra() {
                 <div className="admin-header">
                   <div className="admin-title">Products</div>
                   <div className="admin-subtitle">Manage your catalogue</div>
+                </div>
+                <div className="admin-card" style={{background:"rgba(232,56,79,0.04)",border:"1.5px solid rgba(232,56,79,0.15)"}}>
+                  <div className="admin-card-title" style={{display:"flex",alignItems:"center",gap:8}}>🏷️ Storewide Sale</div>
+                  <div style={{fontSize:12,color:"var(--muted)",marginBottom:16}}>Put every product on sale at once, instead of editing them one by one.</div>
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+                    <div className="form-group" style={{margin:0}}>
+                      <label className="form-label">Type</label>
+                      <select className="form-select" value={bulkSale.type} onChange={e=>setBulkSale(f=>({...f,type:e.target.value}))}>
+                        <option value="percent">% Percentage</option>
+                        <option value="flat">৳ Flat Amount</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{margin:0}}>
+                      <label className="form-label">{bulkSale.type==="percent"?"Discount (%)":"Discount (৳)"}</label>
+                      <input className="form-input" type="number" min="0" style={{width:140}}
+                        max={bulkSale.type==="percent"?"100":undefined}
+                        placeholder={bulkSale.type==="percent"?"e.g. 20":"e.g. 500"}
+                        value={bulkSale.value} onChange={e=>setBulkSale(f=>({...f,value:e.target.value}))}/>
+                    </div>
+                    <button className="save-btn" disabled={bulkSaleBusy} onClick={applySaleToAll}
+                      style={bulkSaleBusy?{opacity:0.6,cursor:"not-allowed"}:undefined}>
+                      {bulkSaleBusy?"Applying…":`Apply to All ${products.length} Products`}
+                    </button>
+                    <button className="action-btn danger" disabled={bulkSaleBusy} onClick={clearAllDiscounts}
+                      style={bulkSaleBusy?{opacity:0.6,cursor:"not-allowed"}:undefined}>
+                      Clear All Discounts
+                    </button>
+                  </div>
                 </div>
                 <div className="admin-card">
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -2316,8 +2390,14 @@ export default function Viventra() {
                         </div>
                         <div className="cart-item-info">
                           <div className="cart-item-name">{item.name}</div>
-                          <div className="cart-item-cat">{item.category.replace("-"," ")} · Qty: {item.qty}</div>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div className="cart-item-cat">{item.category.replace("-"," ")}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:14,marginTop:6}}>
+                            <div className="qty-control">
+                              <button className="qty-btn" onClick={()=>changeCartQty(item.id,-1)}>−</button>
+                              <span className="qty-num">{item.qty}</span>
+                              <button className="qty-btn" onClick={()=>changeCartQty(item.id,1)}
+                                disabled={item.stock!==null&&item.stock!==undefined&&item.qty>=Number(item.stock)}>+</button>
+                            </div>
                             {hasDiscount(item)&&<span style={{fontSize:12,color:"var(--muted)",textDecoration:"line-through"}}>৳{item.price.toLocaleString()}</span>}
                             <span className="cart-item-price">৳{(getFinalPrice(item)*item.qty).toLocaleString()}</span>
                           </div>
