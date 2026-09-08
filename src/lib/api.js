@@ -150,11 +150,14 @@ export async function insertOrder(order) {
   // Primary path: create the order through our own server (/api/create-order),
   // which works reliably everywhere — including Facebook/Instagram's in-app
   // browser, which can break a direct anon-key request straight to Supabase.
+  // The reCAPTCHA token only travels to our own server (never to Supabase
+  // directly), since verifying it needs the secret key, which only the
+  // server has.
   try {
     const res = await fetch("/api/create-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(row),
+      body: JSON.stringify({ ...row, recaptcha_token: order.recaptchaToken }),
     });
     if (res.status === 501) {
       // Not configured yet (missing SUPABASE_SERVICE_ROLE_KEY) — fall back below.
